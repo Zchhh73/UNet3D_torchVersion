@@ -1,6 +1,6 @@
 class InitParser(object):
     def __init__(self):
-
+        self.name = 'UNet'
         self.do_you_wanna_train = True                                                # 'Training will start'
         self.do_you_wanna_load_weights = False                                        # 'Load weights'
         self.do_you_wanna_check_accuracy = False                                      # 'Model will be tested after the training or only this is done'
