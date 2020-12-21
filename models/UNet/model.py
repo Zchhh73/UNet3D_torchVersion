@@ -1,147 +1,159 @@
+from torch.nn import Module, Sequential
+from torch.nn import Conv3d, ConvTranspose3d, BatchNorm3d, MaxPool3d, AvgPool1d, Dropout3d
+from torch.nn import ReLU, Sigmoid
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import sys
-
-sys.path.append('..')
-from models.UNet import groupnorm
 
 
-class UNet3D(nn.Module):
-    def __init__(self, in_channels, out_channels, final_sigmoid, interpolate=True, conv_layer_order='crg'):
+class UNet3D(Module):
+    # The convolution operations on either side are residual subject to 1*1 Convolution for channel homogeneity
+
+    def __init__(self, num_channels=1, feat_channels=[64, 256, 256, 512, 1024], residual='conv'):
+        # 残差：针对每一层的残差输入x到1 * 1 conv进行转换以进行下采样，无用于去除残差
         super(UNet3D, self).__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
 
-        self.encoders = nn.ModuleList([
-            Encoder(in_channels, 64, is_max_pool=False, conv_layer_order=conv_layer_order),
-            Encoder(64, 128, conv_layer_order=conv_layer_order),
-            Encoder(128, 256, conv_layer_order=conv_layer_order),
-            Encoder(256, 512, conv_layer_order=conv_layer_order)
-        ])
+        # Encoder downsamplers
+        self.pool1 = MaxPool3d((2, 2, 2))
+        self.pool2 = MaxPool3d((2, 2, 2))
+        self.pool3 = MaxPool3d((2, 2, 2))
+        self.pool4 = MaxPool3d((2, 2, 2))
 
-        self.decoders = nn.ModuleList([
-            Decoder(256 + 512, 256, interpolate, conv_layer_order=conv_layer_order),
-            Decoder(128 + 256, 128, interpolate, conv_layer_order=conv_layer_order),
-            Decoder(64 + 128, 64, interpolate, conv_layer_order=conv_layer_order),
-        ])
-        self.final_conv = nn.Conv3d(64, out_channels, 1)
-        if final_sigmoid:
-            self.final_activation = nn.Sigmoid()
-        else:
-            self.final_activation = None
+        # Encoder convolutions
+        self.conv_blk1 = Conv3D_Block(num_channels, feat_channels[0], residual=residual)
+        self.conv_blk2 = Conv3D_Block(feat_channels[0], feat_channels[1], residual=residual)
+        self.conv_blk3 = Conv3D_Block(feat_channels[1], feat_channels[2], residual=residual)
+        self.conv_blk4 = Conv3D_Block(feat_channels[2], feat_channels[3], residual=residual)
+        self.conv_blk5 = Conv3D_Block(feat_channels[3], feat_channels[4], residual=residual)
 
-    def forward(self, x):
-        encoders_features = []
-        for encoder in self.encoders:
-            x = encoder(x)
-            encoders_features.insert(0, x)
-        encoders_features = encoders_features[1:]
+        # Decoder convolutions
+        self.dec_conv_blk4 = Conv3D_Block(2 * feat_channels[3], feat_channels[3], residual=residual)
+        self.dec_conv_blk3 = Conv3D_Block(2 * feat_channels[2], feat_channels[2], residual=residual)
+        self.dec_conv_blk2 = Conv3D_Block(2 * feat_channels[1], feat_channels[1], residual=residual)
+        self.dec_conv_blk1 = Conv3D_Block(2 * feat_channels[0], feat_channels[0], residual=residual)
 
-        for decoder, encoders_features in zip(self.decoders, encoders_features):
-            x = decoder(encoders_features, x)
+        # Decoder upsamplers
+        self.deconv_blk4 = Deconv3D_Block(feat_channels[4], feat_channels[3])
+        self.deconv_blk3 = Deconv3D_Block(feat_channels[3], feat_channels[2])
+        self.deconv_blk2 = Deconv3D_Block(feat_channels[2], feat_channels[1])
+        self.deconv_blk1 = Deconv3D_Block(feat_channels[1], feat_channels[0])
 
-        x = self.final_conv(x)
-        if self.final_activation is not None:
-            x = self.final_activation(x)
+        # Final 1*1 Conv Segmentation map
+        self.one_conv = Conv3d(feat_channels[0], num_channels, kernel_size=1, stride=1, padding=0, bias=True)
 
-        return x
-
-
-class Encoder(nn.Module):
-    def __init__(self, in_channels, out_channels, conv_kerner_size=3, is_max_pool=True, max_pool_kernel_size=(2, 2, 2),
-                 conv_layer_order='crg'):
-        super(Encoder, self).__init__()
-        self.max_pool = nn.MaxPool3d(kernel_size=max_pool_kernel_size, padding=1) if is_max_pool else None
-        self.double_conv = DoubleConv(in_channels, out_channels, kernel_size=conv_kerner_size, order=conv_layer_order)
+        # Activation function
+        self.sigmoid = Sigmoid()
 
     def forward(self, x):
-        if self.max_pool is not None:
-            x = self.max_pool(x)
-        x = self.double_conv(x)
-        return x
+        # Encoder part
+
+        x1 = self.conv_blk1(x)
+
+        x_low1 = self.pool1(x1)
+        x2 = self.conv_blk2(x_low1)
+
+        x_low2 = self.pool2(x2)
+        x3 = self.conv_blk3(x_low2)
+
+        x_low3 = self.pool3(x3)
+        x4 = self.conv_blk4(x_low3)
+
+        x_low4 = self.pool4(x4)
+        base = self.conv_blk5(x_low4)
+
+        # Decoder part
+
+        d4 = torch.cat([self.deconv_blk4(base), x4], dim=1)
+        d_high4 = self.dec_conv_blk4(d4)
+
+        d3 = torch.cat([self.deconv_blk3(d_high4), x3], dim=1)
+        d_high3 = self.dec_conv_blk3(d3)
+        d_high3 = Dropout3d(p=0.5)(d_high3)
+
+        d2 = torch.cat([self.deconv_blk2(d_high3), x2], dim=1)
+        d_high2 = self.dec_conv_blk2(d2)
+        d_high2 = Dropout3d(p=0.5)(d_high2)
+
+        d1 = torch.cat([self.deconv_blk1(d_high2), x1], dim=1)
+        d_high1 = self.dec_conv_blk1(d1)
+
+        seg = self.sigmoid(self.one_conv(d_high1))
+
+        return seg
 
 
-class Decoder(nn.Module):
-    def __init__(self, in_channels, out_channels, interpolate, kernel_size=3, scale_factor=(2, 2, 2),
-                 conv_layer_order='crg'):
-        super(Decoder, self).__init__()
-        if interpolate:
-            self.upsample = None
+class Conv3D_Block(Module):
+
+    def __init__(self, inp_feat, out_feat, kernel=3, stride=1, padding=1, residual=None):
+
+        super(Conv3D_Block, self).__init__()
+
+        self.conv1 = Sequential(
+            Conv3d(inp_feat, out_feat, kernel_size=kernel,
+                   stride=stride, padding=padding, bias=True),
+            BatchNorm3d(out_feat),
+            ReLU())
+
+        self.conv2 = Sequential(
+            Conv3d(out_feat, out_feat, kernel_size=kernel,
+                   stride=stride, padding=padding, bias=True),
+            BatchNorm3d(out_feat),
+            ReLU())
+
+        self.residual = residual
+
+        if self.residual is not None:
+            self.residual_upsampler = Conv3d(inp_feat, out_feat, kernel_size=1, bias=False)
+
+    def forward(self, x):
+
+        res = x
+
+        if not self.residual:
+            return self.conv2(self.conv1(x))
         else:
-            self.upsample = nn.ConvTranspose3d(2 * out_channels,
-                                               2 * out_channels,
-                                               kernel_size=kernel_size,
-                                               stride=scale_factor,
-                                               padding=1,
-                                               output_padding=1)
-        self.double_conv = DoubleConv(in_channels, out_channels,
-                                      kernel_size=kernel_size,
-                                      order=conv_layer_order)
-
-    def forward(self, encoder_features, x):
-        if self.upsample is None:
-            output_size = encoder_features.size()[2:]
-            x = F.interpolate(x, size=output_size, mode='nearest')
-        else:
-            x = self.upsample(x)
-        x = torch.cat((encoder_features, x), dim=1)
-        x = self.double_conv(x)
-        return x
+            return self.conv2(self.conv1(x)) + self.residual_upsampler(res)
 
 
-class DoubleConv(nn.Sequential):
-    '''
-    'cr' -> conv + ReLU
-    'crg' -> conv + ReLU + groupnorm
-    '''
+class Deconv3D_Block(Module):
 
-    def __init__(self, in_channels, out_channels, kernel_size=3, order='crg'):
-        super(DoubleConv, self).__init__()
-        if in_channels < out_channels:
-            # if in_channels < out_channels we're in the encoder path
-            conv1_in_channels, conv1_out_channels = in_channels, out_channels // 2
-            conv2_in_channels, conv2_out_channels = conv1_out_channels, out_channels
-        else:
-            # otherwise we're in the decoder path
-            conv1_in_channels, conv1_out_channels = in_channels, out_channels
-            conv2_in_channels, conv2_out_channels = out_channels, out_channels
-        # conv1
-        self._add_conv(1, conv1_in_channels, conv1_out_channels,
-                       kernel_size, order)
-        # conv2
-        self._add_conv(2, conv2_in_channels, conv2_out_channels,
-                       kernel_size, order)
+    def __init__(self, inp_feat, out_feat, kernel=3, stride=2, padding=1):
+        super(Deconv3D_Block, self).__init__()
 
-    def _add_conv(self, pos, in_channels, out_channels, kernel_size, order):
-        assert pos in [1, 2], 'pos MUST be either 1 or 2'
-        assert 'c' in order, "'c' (conv layer) MUST be present"
-        assert 'r' in order, "'r' (ReLU layer) MUST be present"
-        assert order[
-                   0] is not 'r', 'ReLU cannot be the first operation in the layer'
+        self.deconv = Sequential(
+            ConvTranspose3d(inp_feat, out_feat, kernel_size=(kernel, kernel, kernel),
+                            stride=(stride, stride, stride), padding=(padding, padding, padding), output_padding=1,
+                            bias=True),
+            ReLU())
 
-        for i, char in enumerate(order):
-            if char == 'r':
-                self.add_module(f'relu{pos}', nn.ReLU(inplace=True))
-            elif char == 'c':
-                self.add_module(f'conv{pos}', nn.Conv3d(in_channels, out_channels, kernel_size, padding=1))
-            elif char == 'g':
-                is_before_conv = i < order.index('c')
-                assert not is_before_conv, 'GroupNorm3d MUST go after the Conv3d'
-                self.add_module(f'norm{pos}', groupnorm.GroupNorm3d(out_channels))
-            elif char == 'b':
-                is_before_conv = i < order.index('c')
-                if is_before_conv:
-                    self.add_module(f'norm{pos}', nn.BatchNorm3d(in_channels))
-                else:
-                    self.add_module(f'norm{pos}', nn.BatchNorm3d(out_channels))
-            else:
-                raise ValueError(f"Unsupported layer type '{char}'. MUST be one of 'b', 'r', 'c'")
+    def forward(self, x):
+        return self.deconv(x)
+
+
+class ChannelPool3d(AvgPool1d):
+
+    def __init__(self, kernel_size, stride, padding):
+        super(ChannelPool3d, self).__init__(kernel_size, stride, padding)
+        self.pool_1d = AvgPool1d(self.kernel_size, self.stride, self.padding, self.ceil_mode)
+
+    def forward(self, inp):
+        n, c, d, w, h = inp.size()
+        inp = inp.view(n, c, d * w * h).permute(0, 2, 1)
+        pooled = self.pool_1d(inp)
+        c = int(c / self.kernel_size[0])
+        return inp.view(n, c, d, w, h)
 
 
 if __name__ == '__main__':
-    model = UNet3D(3, 3, False).cuda()
-    model.train()
-    x = torch.randn((1, 3, 8, 128, 128)).cuda()
-    y = model(x)
-    print(y.shape)
+    import time
+    import torch
+    from torch.autograd import Variable
+    from torchsummaryX import summary
+
+    torch.cuda.set_device(0)
+    net = UNet3D(residual='pool').cuda().eval()
+
+    data = Variable(torch.randn(1, 1, 128, 128, 16)).cuda()
+
+    out = net(data)
+
+    summary(net, data)
+    print("out size: {}".format(out.size()))

@@ -25,9 +25,10 @@ class InitParser(object):
         self.stride_layer = 16                                                        # "Stride size in z direction"
 
         # path setting
-        self.data_path = './Data_folder/train_set/'                           # Training data folder
-        self.val_path = './Data_folder/validation_set/'                       # Validation data folder
-        self.test_path = './Data_folder/test_set/'                            # Testing data folder
-        self.history_dir = './trained_model/unet3d'
-        self.load_path = "./trained_model/unet3d/Checkpoint/Network_{}.pth.gz".format(self.init_epoch-1)
-        self.output_path = "./trained_model/unet3d/"
+        self.name = r'Unet3D'
+        self.data_path = r'D:/Data/train'                           # Training data folder
+        self.val_path = r'D:/Data/val'                            # Validation data folder
+        self.test_path = r'D:/Data/test'                            # Testing data folder
+        self.history_dir = r'trained_model'
+        self.load_path = r"trained_model/Unet3D/Checkpoint/Network_{}.pth.gz".format(self.init_epoch-1)
+        self.output_path = r"trained_model"
