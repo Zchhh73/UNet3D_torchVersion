@@ -21,12 +21,12 @@ Segmentation = True
 
 def create_list(data_path):
     data_list = glob.glob(os.path.join(data_path, '*'))
-    mask_name = 'mask.nii.gz'
-    img_name = 'image.nii.gz'
+    label_name = 'mask.nii.gz'
+    data_name = 'image.nii.gz'
     data_list.sort()
     list_all = [{
-        'data': os.path.join(path, img_name),
-        'label': os.path.join(path, mask_name)
+        'data': os.path.join(path, data_name),
+        'label': os.path.join(path, label_name)
     } for path in data_list]
     return list_all
 
@@ -148,16 +148,17 @@ def resample_sitk_image(sitk_image, spacing=None, interpolator=None, fill_value=
 
     resample_filter = sitk.ResampleImageFilter()
 
-    resampled_sitk_image = resample_filter.Execute(sitk_image,
-                                                   new_size,
-                                                   sitk.Transform(),
-                                                   sitk_interpolator,
-                                                   orig_origin,
-                                                   new_spacing,
-                                                   orig_direction,
-                                                   fill_value,
-                                                   orig_pixelid)
+    # resampled_sitk_image = resample_filter.Execute(sitk_image,
+    #                                                new_size,
+    #                                                sitk.Transform(),
+    #                                                sitk_interpolator,
+    #                                                orig_origin,
+    #                                                new_spacing,
+    #                                                orig_direction,
+    #                                                fill_value,
+    #                                                orig_pixelid)
 
+    resampled_sitk_image = resample_filter.Execute(sitk_image)
     return resampled_sitk_image
 
 
