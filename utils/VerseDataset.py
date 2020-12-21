@@ -25,8 +25,8 @@ def create_list(data_path):
     img_name = 'image.nii.gz'
     data_list.sort()
     list_all = [{
-        'image': os.path.join(path, img_name),
-        'mask': os.path.join(path, mask_name)
+        'data': os.path.join(path, img_name),
+        'label': os.path.join(path, mask_name)
     } for path in data_list]
     return list_all
 
