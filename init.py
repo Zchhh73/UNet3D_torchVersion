@@ -7,7 +7,7 @@ class InitParser(object):
 
         # gpu setting
         self.multi_gpu = True                                                         # 'Decide to use one or more GPUs'
-        self.gpu_id = '0'                                                             # 'Select the GPUs for training and testing'
+        self.gpu_id = '1'                                                             # 'Select the GPUs for training and testing'
         # optimizer setting
         self.lr = 0.0002                                                              # 'Learning rate'
         self.weight_decay = 1e-4                                                      # 'Weight decay'
@@ -26,9 +26,9 @@ class InitParser(object):
 
         # path setting
         self.name = r'Unet3D'
-        self.data_path = r'D:/Data/train'                           # Training data folder
-        self.val_path = r'D:/Data/val'                            # Validation data folder
-        self.test_path = r'D:/Data/test'                            # Testing data folder
+        self.data_path = r'/hdd/chenkecheng/zchhh_data/Data/train'                           # Training data folder
+        self.val_path = r'/hdd/chenkecheng/zchhh_data/Data/val'                            # Validation data folder
+        self.test_path = r'/hdd/chenkecheng/zchhh_data/Data/test'                            # Testing data folder
         self.history_dir = r'trained_model'
         self.load_path = r"trained_model/Unet3D/Checkpoint/Network_{}.pth.gz".format(self.init_epoch-1)
-        self.output_path = r"trained_model"
+        self.output_path = r'trained_model'

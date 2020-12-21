@@ -8,8 +8,8 @@ from losses import DiceLoss, BinaryDiceLoss
 from models.UNet.model import UNet3D as UNet
 from collections import OrderedDict
 from utils.VerseDataset import *
-from metrics import dice_coeff
 import utils.VerseDataset as VerseDataset
+from metrics import dice_coeff
 from init import InitParser
 
 
@@ -121,9 +121,9 @@ def main(args):
 
         ]
 
-        trainSet = VerseDataset(train_list, transforms=trainTransforms, train=True)
-        valSet = VerseDataset(val_list, transforms=valTransforms, test=True)
-        testSet = VerseDataset(test_list, transforms=valTransforms, test=True)
+        trainSet = VerseDataset.VerseDataset(train_list, transforms=trainTransforms, train=True)
+        valSet = VerseDataset.VerseDataset(val_list, transforms=valTransforms, test=True)
+        testSet = VerseDataset.VerseDataset(test_list, transforms=valTransforms, test=True)
 
         trainLoader = DataLoader(trainSet, batch_size=args.batch_size, shuffle=True)
         valLoader = DataLoader(valSet, batch_size=args.batch_size, shuffle=False)
