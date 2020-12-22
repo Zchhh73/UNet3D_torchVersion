@@ -1,159 +1,320 @@
-from torch.nn import Module, Sequential
-from torch.nn import Conv3d, ConvTranspose3d, BatchNorm3d, MaxPool3d, AvgPool1d, Dropout3d
-from torch.nn import ReLU, Sigmoid
+from __future__ import print_function
+import argparse
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torchvision import datasets, transforms
 
 
-class UNet3D(Module):
-    # The convolution operations on either side are residual subject to 1*1 Convolution for channel homogeneity
+# 未测试
+class SEBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, net_mode='2d'):
+        super(SEBlock, self).__init__()
 
-    def __init__(self, num_channels=1, feat_channels=[64, 256, 256, 512, 1024], residual='conv'):
-        # 残差：针对每一层的残差输入x到1 * 1 conv进行转换以进行下采样，无用于去除残差
-        super(UNet3D, self).__init__()
-
-        # Encoder downsamplers
-        self.pool1 = MaxPool3d((2, 2, 2))
-        self.pool2 = MaxPool3d((2, 2, 2))
-        self.pool3 = MaxPool3d((2, 2, 2))
-        self.pool4 = MaxPool3d((2, 2, 2))
-
-        # Encoder convolutions
-        self.conv_blk1 = Conv3D_Block(num_channels, feat_channels[0], residual=residual)
-        self.conv_blk2 = Conv3D_Block(feat_channels[0], feat_channels[1], residual=residual)
-        self.conv_blk3 = Conv3D_Block(feat_channels[1], feat_channels[2], residual=residual)
-        self.conv_blk4 = Conv3D_Block(feat_channels[2], feat_channels[3], residual=residual)
-        self.conv_blk5 = Conv3D_Block(feat_channels[3], feat_channels[4], residual=residual)
-
-        # Decoder convolutions
-        self.dec_conv_blk4 = Conv3D_Block(2 * feat_channels[3], feat_channels[3], residual=residual)
-        self.dec_conv_blk3 = Conv3D_Block(2 * feat_channels[2], feat_channels[2], residual=residual)
-        self.dec_conv_blk2 = Conv3D_Block(2 * feat_channels[1], feat_channels[1], residual=residual)
-        self.dec_conv_blk1 = Conv3D_Block(2 * feat_channels[0], feat_channels[0], residual=residual)
-
-        # Decoder upsamplers
-        self.deconv_blk4 = Deconv3D_Block(feat_channels[4], feat_channels[3])
-        self.deconv_blk3 = Deconv3D_Block(feat_channels[3], feat_channels[2])
-        self.deconv_blk2 = Deconv3D_Block(feat_channels[2], feat_channels[1])
-        self.deconv_blk1 = Deconv3D_Block(feat_channels[1], feat_channels[0])
-
-        # Final 1*1 Conv Segmentation map
-        self.one_conv = Conv3d(feat_channels[0], num_channels, kernel_size=1, stride=1, padding=0, bias=True)
-
-        # Activation function
-        self.sigmoid = Sigmoid()
-
-    def forward(self, x):
-        # Encoder part
-
-        x1 = self.conv_blk1(x)
-
-        x_low1 = self.pool1(x1)
-        x2 = self.conv_blk2(x_low1)
-
-        x_low2 = self.pool2(x2)
-        x3 = self.conv_blk3(x_low2)
-
-        x_low3 = self.pool3(x3)
-        x4 = self.conv_blk4(x_low3)
-
-        x_low4 = self.pool4(x4)
-        base = self.conv_blk5(x_low4)
-
-        # Decoder part
-
-        d4 = torch.cat([self.deconv_blk4(base), x4], dim=1)
-        d_high4 = self.dec_conv_blk4(d4)
-
-        d3 = torch.cat([self.deconv_blk3(d_high4), x3], dim=1)
-        d_high3 = self.dec_conv_blk3(d3)
-        d_high3 = Dropout3d(p=0.5)(d_high3)
-
-        d2 = torch.cat([self.deconv_blk2(d_high3), x2], dim=1)
-        d_high2 = self.dec_conv_blk2(d2)
-        d_high2 = Dropout3d(p=0.5)(d_high2)
-
-        d1 = torch.cat([self.deconv_blk1(d_high2), x1], dim=1)
-        d_high1 = self.dec_conv_blk1(d1)
-
-        seg = self.sigmoid(self.one_conv(d_high1))
-
-        return seg
-
-
-class Conv3D_Block(Module):
-
-    def __init__(self, inp_feat, out_feat, kernel=3, stride=1, padding=1, residual=None):
-
-        super(Conv3D_Block, self).__init__()
-
-        self.conv1 = Sequential(
-            Conv3d(inp_feat, out_feat, kernel_size=kernel,
-                   stride=stride, padding=padding, bias=True),
-            BatchNorm3d(out_feat),
-            ReLU())
-
-        self.conv2 = Sequential(
-            Conv3d(out_feat, out_feat, kernel_size=kernel,
-                   stride=stride, padding=padding, bias=True),
-            BatchNorm3d(out_feat),
-            ReLU())
-
-        self.residual = residual
-
-        if self.residual is not None:
-            self.residual_upsampler = Conv3d(inp_feat, out_feat, kernel_size=1, bias=False)
-
-    def forward(self, x):
-
-        res = x
-
-        if not self.residual:
-            return self.conv2(self.conv1(x))
+        if net_mode == '2d':
+            self.gap = nn.AdaptiveAvgPool2d(1)
+            conv = nn.Conv2d
+        elif net_mode == '3d':
+            self.gap = nn.AdaptiveAvgPool3d(1)
+            conv = nn.Conv3d
         else:
-            return self.conv2(self.conv1(x)) + self.residual_upsampler(res)
+            self.gap = None
+            conv = None
 
+        self.conv1 = conv(in_channels, out_channels, 1)
+        self.conv2 = conv(in_channels, out_channels, 1)
 
-class Deconv3D_Block(Module):
-
-    def __init__(self, inp_feat, out_feat, kernel=3, stride=2, padding=1):
-        super(Deconv3D_Block, self).__init__()
-
-        self.deconv = Sequential(
-            ConvTranspose3d(inp_feat, out_feat, kernel_size=(kernel, kernel, kernel),
-                            stride=(stride, stride, stride), padding=(padding, padding, padding), output_padding=1,
-                            bias=True),
-            ReLU())
+        self.relu = nn.ReLU(inplace=True)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        return self.deconv(x)
+        inpu = x
+        x = self.gap(x)
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.sigmoid(x)
+
+        return inpu * x
 
 
-class ChannelPool3d(AvgPool1d):
+# 未测试
+class DenseBlock(nn.Module):
+    def __init__(self, channels, conv_num, net_mode='2d'):
+        super(DenseBlock, self).__init__()
+        self.conv_num = conv_num
+        if net_mode == '2d':
+            conv = nn.Conv2d
+        elif net_mode == '3d':
+            conv = nn.Conv3d
+        else:
+            conv = None
 
-    def __init__(self, kernel_size, stride, padding):
-        super(ChannelPool3d, self).__init__(kernel_size, stride, padding)
-        self.pool_1d = AvgPool1d(self.kernel_size, self.stride, self.padding, self.ceil_mode)
+        self.relu = nn.ReLU()
+        self.conv_list = []
+        self.bottle_conv_list = []
+        for i in conv_num:
+            self.bottle_conv_list.append(conv(channels * (i + 1), channels * 4, 1))
+            self.conv_list.append(conv(channels * 4, channels, 3, padding=1))
 
-    def forward(self, inp):
-        n, c, d, w, h = inp.size()
-        inp = inp.view(n, c, d * w * h).permute(0, 2, 1)
-        pooled = self.pool_1d(inp)
-        c = int(c / self.kernel_size[0])
-        return inp.view(n, c, d, w, h)
+    def forward(self, x):
 
+        res_x = []
+        res_x.append(x)
+
+        for i in self.conv_num:
+            inputs = torch.cat(res_x, dim=1)
+            x = self.bottle_conv_list[i](inputs)
+            x = self.relu(x)
+            x = self.conv_list[i](x)
+            x = self.relu(x)
+            res_x.append(x)
+
+        return x
+
+
+class ResBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, net_mode='2d'):
+        super(ResBlock, self).__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        if net_mode == '2d':
+            conv = nn.Conv2d
+            bn = nn.BatchNorm2d
+        elif net_mode == '3d':
+            conv = nn.Conv3d
+            bn = nn.BatchNorm3d
+        else:
+            conv = None
+            bn = None
+
+        self.conv1 = conv(in_channels, out_channels, 3, stride=stride, padding=1)
+        self.bn1 = bn(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = conv(out_channels, out_channels, 3, stride=stride, padding=1)
+        self.bn2 = bn(out_channels)
+
+        if in_channels != out_channels:
+            self.res_conv = conv(in_channels, out_channels, 1, stride=stride)
+
+    def forward(self, x):
+        if self.in_channels != self.out_channels:
+            res = self.res_conv(x)
+        else:
+            res = x
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+
+        out = x + res
+        out = self.relu(out)
+
+        return out
+
+
+class Up(nn.Module):
+    def __init__(self, down_in_channels, in_channels, out_channels, conv_block, interpolation=True, net_mode='2d'):
+        super(Up, self).__init__()
+
+        if net_mode == '2d':
+            inter_mode = 'bilinear'
+            trans_conv = nn.ConvTranspose2d
+        elif net_mode == '3d':
+            inter_mode = 'trilinear'
+            trans_conv = nn.ConvTranspose3d
+        else:
+            inter_mode = None
+            trans_conv = None
+
+        if interpolation == True:
+            self.up = nn.Upsample(scale_factor=2, mode=inter_mode, align_corners=True)
+        else:
+            self.up = trans_conv(down_in_channels, down_in_channels, 2, stride=2)
+
+        self.conv = RecombinationBlock(in_channels + down_in_channels, out_channels, net_mode=net_mode)
+
+    def forward(self, down_x, x):
+        up_x = self.up(down_x)
+
+        x = torch.cat((up_x, x), dim=1)
+
+        x = self.conv(x)
+
+        return x
+
+
+class Down(nn.Module):
+    def __init__(self, in_channels, out_channels, conv_block, net_mode='2d'):
+        super(Down, self).__init__()
+        if net_mode == '2d':
+            maxpool = nn.MaxPool2d
+        elif net_mode == '3d':
+            maxpool = nn.MaxPool3d
+        else:
+            maxpool = None
+
+        self.conv = RecombinationBlock(in_channels, out_channels, net_mode=net_mode)
+
+        self.down = maxpool(2, stride=2)
+
+    def forward(self, x):
+        x = self.conv(x)
+        out = self.down(x)
+
+        return x, out
+
+
+class SegSEBlock(nn.Module):
+    def __init__(self, in_channels, rate=2, net_mode='2d'):
+        super(SegSEBlock, self).__init__()
+
+        if net_mode == '2d':
+            conv = nn.Conv2d
+        elif net_mode == '3d':
+            conv = nn.Conv3d
+        else:
+            conv = None
+
+        self.in_channels = in_channels
+        self.rate = rate
+        self.dila_conv = conv(self.in_channels, self.in_channels // self.rate, 3, padding=2, dilation=self.rate)
+        self.conv1 = conv(self.in_channels // self.rate, self.in_channels, 1)
+
+    def forward(self, input):
+        x = self.dila_conv(input)
+        x = self.conv1(x)
+        x = nn.Sigmoid()(x)
+
+        return x
+
+
+class RecombinationBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, batch_normalization=True, kernel_size=3, net_mode='2d'):
+        super(RecombinationBlock, self).__init__()
+
+        if net_mode == '2d':
+            conv = nn.Conv2d
+            bn = nn.BatchNorm2d
+        elif net_mode == '3d':
+            conv = nn.Conv3d
+            bn = nn.BatchNorm3d
+        else:
+            conv = None
+            bn = None
+
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.bach_normalization = batch_normalization
+        self.kerenl_size = kernel_size
+        self.rate = 2
+        self.expan_channels = self.out_channels * self.rate
+
+        self.expansion_conv = conv(self.in_channels, self.expan_channels, 1)
+        self.skip_conv = conv(self.in_channels, self.out_channels, 1)
+        self.zoom_conv = conv(self.out_channels * self.rate, self.out_channels, 1)
+
+        self.bn = bn(self.expan_channels)
+        self.norm_conv = conv(self.expan_channels, self.expan_channels, self.kerenl_size, padding=1)
+
+        self.segse_block = SegSEBlock(self.expan_channels, net_mode=net_mode)
+
+    def forward(self, input):
+        x = self.expansion_conv(input)
+
+        for i in range(1):
+            if self.bach_normalization:
+                x = self.bn(x)
+            x = nn.ReLU6()(x)
+            x = self.norm_conv(x)
+
+        se_x = self.segse_block(x)
+
+        x = x * se_x
+
+        x = self.zoom_conv(x)
+
+        skip_x = self.skip_conv(input)
+        out = x + skip_x
+
+        return out
+
+
+class UNet(nn.Module):
+    def __init__(self, in_channels, filter_num_list, class_num, conv_block=RecombinationBlock, net_mode='2d'):
+        super(UNet, self).__init__()
+
+        if net_mode == '2d':
+            conv = nn.Conv2d
+        elif net_mode == '3d':
+            conv = nn.Conv3d
+        else:
+            conv = None
+
+        self.inc = conv(in_channels, 16, 1)
+
+        # down
+        self.down1 = Down(16, filter_num_list[0], conv_block=conv_block, net_mode=net_mode)
+        self.down2 = Down(filter_num_list[0], filter_num_list[1], conv_block=conv_block, net_mode=net_mode)
+        self.down3 = Down(filter_num_list[1], filter_num_list[2], conv_block=conv_block, net_mode=net_mode)
+        self.down4 = Down(filter_num_list[2], filter_num_list[3], conv_block=conv_block, net_mode=net_mode)
+
+        self.bridge = conv_block(filter_num_list[3], filter_num_list[4], net_mode=net_mode)
+
+        # up
+        self.up1 = Up(filter_num_list[4], filter_num_list[3], filter_num_list[3], conv_block=conv_block,
+                      net_mode=net_mode)
+        self.up2 = Up(filter_num_list[3], filter_num_list[2], filter_num_list[2], conv_block=conv_block,
+                      net_mode=net_mode)
+        self.up3 = Up(filter_num_list[2], filter_num_list[1], filter_num_list[1], conv_block=conv_block,
+                      net_mode=net_mode)
+        self.up4 = Up(filter_num_list[1], filter_num_list[0], filter_num_list[0], conv_block=conv_block,
+                      net_mode=net_mode)
+
+        self.class_conv = conv(filter_num_list[0], class_num, 1)
+
+    def forward(self, input):
+
+        x = input
+
+        x = self.inc(x)
+
+        conv1, x = self.down1(x)
+
+        conv2, x = self.down2(x)
+
+        conv3, x = self.down3(x)
+
+        conv4, x = self.down4(x)
+
+        x = self.bridge(x)
+
+        x = self.up1(x, conv4)
+
+        x = self.up2(x, conv3)
+
+        x = self.up3(x, conv2)
+
+        x = self.up4(x, conv1)
+
+        x = self.class_conv(x)
+
+        x = nn.Softmax(1)(x)
+
+        return x
+
+
+'''
+def main():
+    torch.cuda.set_device(1)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # PyTorch v0.4.0
+    model = UNet(1,[32,48,64,96,128],3,net_mode='3d').to(device)
+    x=torch.rand(4,1,64,96,96)
+    x=x.to(device)
+    model.forward(x)
 
 if __name__ == '__main__':
-    import time
-    import torch
-    from torch.autograd import Variable
-    from torchsummaryX import summary
-
-    torch.cuda.set_device(0)
-    net = UNet3D(residual='pool').cuda().eval()
-
-    data = Variable(torch.randn(1, 1, 128, 128, 16)).cuda()
-
-    out = net(data)
-
-    summary(net, data)
-    print("out size: {}".format(out.size()))
+    main()
+'''

@@ -1,199 +1,128 @@
-import time
-import os
-import torch
-from utils.util import *
+from dataset.VerseDataSet import VerseDataset
 from torch.utils.data import DataLoader
-from torch.autograd import Variable
-from losses import DiceLoss, BinaryDiceLoss
-from models.UNet.model import UNet3D as UNet
+import torch
+import torch.optim as optim
+from tqdm import tqdm
+import config
+from models.UNet.model import UNet, RecombinationBlock
+from utils import logger, init_util, common
+import metrics
+import os
+import numpy as np
 from collections import OrderedDict
-from utils.VerseDataset import *
-import utils.VerseDataset as VerseDataset
-from metrics import dice_coeff
-from init import InitParser
 
 
-class AvgMeter(object):
-    """
-    Acc meter class, use the update to add the current acc
-    and self.avg to get the avg acc
-    """
+def val(model, val_loader):
+    model.eval()
+    val_loss = 0
+    val_dice0 = 0
+    # val_dice1 = 0
+    # val_dice2 = 0
+    with torch.no_grad():
+        for idx, (data, target) in tqdm(enumerate(val_loader), total=len(val_loader)):
+            target = common.to_one_hot_3d(target.long())
+            data, target = data.float(), target.float()
+            data, target = data.to(device), target.to(device)
+            output = model(data)
 
-    def __init__(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
+            loss = metrics.DiceMeanLoss()(output, target)
+            dice0 = metrics.dice(output, target, 0)
+            # dice1 = metrics.dice(output, target, 1)
+            # dice2 = metrics.dice(output, target, 2)
 
-    def reset(self):
-        self.val = 0
-        self.avg = 0
-        self.sum = 0
-        self.count = 0
+            val_loss += float(loss)
+            val_dice0 += float(dice0)
+            # val_dice1 += float(dice1)
+            # val_dice2 += float(dice2)
 
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
-        self.count += n
-        self.avg = self.sum / self.count
+    val_loss /= len(val_loader)
+    val_dice0 /= len(val_loader)
+    # val_dice1 /= len(val_loader)
+    # val_dice2 /= len(val_loader)
+
+    return OrderedDict({'Val Loss': val_loss, 'Val dice0': val_dice0})
+    # return OrderedDict({'Val Loss': val_loss, 'Val dice0': val_dice0,
+    #                     'Val dice1': val_dice1, 'Val dice2': val_dice2})
 
 
-def train(model, train_loader, optimizer, criterion):
+def train(model, train_loader, optimizer):
+    print("=======Epoch:{}=======".format(epoch))
     model.train()
-    losses = AvgMeter()
-    for batch_idx, (input, target) in enumerate(train_loader):
-        input = Variable(input.cuda())
-        target = Variable(target.cuda())
-        output = model(input)
-        loss = criterion(output, target)
-        output = output.squeeze().data.cpu().numpy()
-        label = label.squeeze().cpu().numpy()
-        dice = dice_coeff(output, label)
+    train_loss = 0
+    train_dice0 = 0
+    # train_dice1 = 0
+    # train_dice2 = 0
+    for idx, (data, target) in tqdm(enumerate(train_loader), total=len(train_loader)):
+        target = common.to_one_hot_3d(target.long())
+        data, target = data.float(), target.float()
+        data, target = data.to(device), target.to(device)
+        output = model(data)
         optimizer.zero_grad()
+
+        # loss = nn.CrossEntropyLoss()(output,target)
+        # loss=metrics.SoftDiceLoss()(output,target)
+        # loss=nn.MSELoss()(output,target)
+        # loss = metrics.DiceMeanLoss()(output, target)
+        loss = metrics.WeightDiceLoss()(output, target)
+        # loss=metrics.CrossEntropy()(output,target)
         loss.backward()
         optimizer.step()
-        losses.update(loss.item())
 
-        if batch_idx % 10 == 0:
-            print("Train Batch {} || Loss: {:.4f} | Training Dice: {:.4f}".format(str(batch_idx).zfill(4), losses.val,
-                                                                                  dice))
-    return losses.avg
+        train_loss += float(loss)
+        train_dice0 += float(metrics.dice(output, target, 0))
+        # train_dice1 += float(metrics.dice(output, target, 1))
+        # train_dice2 += float(metrics.dice(output, target, 2))
+    train_loss /= len(train_loader)
+    train_dice0 /= len(train_loader)
+    # train_dice1 /= len(train_loader)
+    # train_dice2 /= len(train_loader)
 
-
-def validate(model, val_loader):
-    model.eval()
-    losses = AvgMeter()
-    for i, (input, label) in enumerate(val_loader):
-        data = Variable(data.cuda())
-        output = model(data)
-        output = output.squeeze().data.cpu().numpy()
-        label = label.squeeze().cpu().numpy()
-        losses.update(dice_coeff(output, label))
-        # print("Test {} || Dice: {:.4f}".format(str(batch_idx).zfill(4), test_dice_meter.val))
-    return losses.avg
-
-
-def main(args):
-    output_path = os.path.join(args.output_path, args.name)
-    ckpt_path = os.path.join(output_path, "Checkpoint")
-    log_path = os.path.join(output_path, "Log")
-    min_pixel = int(args.min_pixel * ((args.patch_size[0] * args.patch_size[1] * args.patch_size[2]) / 100))
-    check_dir(output_path)
-    check_dir(log_path)
-    check_dir(ckpt_path)
-
-    print('Config --------')
-    for arg in vars(args):
-        print('%s,%s' % (arg, getattr(args, arg)))
-    print('---------------')
-
-    with open(os.path.join(output_path, "model_args.txt"), 'w') as f:
-        for arg in vars(args):
-            print('%s,%s' % (arg, getattr(args, arg)), file=f)
-
-    if args.do_you_wanna_train is True:
-        train_list = create_list(args.data_path)
-        val_list = create_list(args.val_path)
-        test_list = create_list(args.test_path)
-
-        for i in range(args.increase_factor_data):
-            train_list.extend(train_list)
-            val_list.extend(val_list)
-            test_list.extend(test_list)
-
-        print('Numbers of train patches per epoch:', len(train_list))
-        print('Numbers of val patches per epoch:', len(val_list))
-        print('Numbers of test patches per epoch:', len(test_list))
-
-        trainTransforms = [
-            VerseDataset.Resample(args.new_resolution, args.resample),
-            VerseDataset.Augmentation(),
-            VerseDataset.Padding((args.patch_size[0], args.patch_size[1], args.patch_size[2])),
-            VerseDataset.RandomCrop((args.patch_size[0], args.patch_size[1], args.patch_size[2]), args.drop_ratio,
-                                    min_pixel),
-
-        ]
-        valTransforms = [
-            VerseDataset.Resample(args.new_resolution, args.resample),
-            VerseDataset.Padding((args.patch_size[0], args.patch_size[1], args.patch_size[2])),
-            VerseDataset.RandomCrop((args.patch_size[0], args.patch_size[1], args.patch_size[2]), args.drop_ratio,
-                                    min_pixel),
-
-        ]
-
-        trainSet = VerseDataset.VerseDataset(train_list, transforms=trainTransforms, train=True)
-        valSet = VerseDataset.VerseDataset(val_list, transforms=valTransforms, test=True)
-        testSet = VerseDataset.VerseDataset(test_list, transforms=valTransforms, test=True)
-
-        trainLoader = DataLoader(trainSet, batch_size=args.batch_size, shuffle=True)
-        valLoader = DataLoader(valSet, batch_size=args.batch_size, shuffle=False)
-        testLoader = DataLoader(testSet, batch_size=args.batch_size, shuffle=False)
-
-        if args.multi_gpu is True:
-            os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
-            model = torch.nn.DataParallel((UNet(residual='pool')).cuda())
-        else:
-            torch.cuda.set_device(args.gpu_id)
-            model = UNet(residual='pool').cuda()
-        if args.do_you_wanna_load_weights is True:
-            model.load_state_dict(torch.load(args.load_path))
-
-        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-        criterion = BinaryDiceLoss()
-        best_dice = 0.
-        for epoch in range(args.init_epoch, args.init_epoch + args.num_epoch):
-            start_time = time.time()
-            epoch_loss = train(model, trainLoader, optimizer, criterion)
-            epoch_dice_val = validate(model, valLoader)
-            epoch_dice_test = validate(model, testLoader)
-            epoch_time = time.time() - start_time
-
-            info_line = "Epoch {} || Loss: {:.4f} | Time(min): {:.2f} |Validation Dice: {:.4f} | Testing Dice: {:.4f}" \
-                .format(str(epoch).zfill(3), epoch_loss, epoch_time / 60, epoch_dice_val, epoch_dice_test)
-
-            open(os.path.join(log_path, 'train_log.txt'), 'a').write(info_line + '\n')
-
-            if epoch % 10 == 0:
-                torch.save(model.state_dict(), os.path.join(ckpt_path, "Network_{}.pth.gz".format(epoch)))
-            if epoch_dice_val > best_dice:
-                best_dice = epoch_dice_val
-                torch.save(model.state_dict(), os.path.join(ckpt_path, "Best_Dice.pth.gz"))
-        '''
-        if args.do_you_wanna_check_accuracy is True:
-
-            if args.multi_gpu is True:
-                os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id  # Multi-gpu selector for training
-                model = torch.nn.DataParallel((UNet(residual='pool')).cuda())  # load the network Unet
-
-            else:
-                torch.cuda.set_device(args.gpu_id)
-                model = UNet(residual='pool').cuda()
-
-            model.load_state_dict(torch.load('History/Checkpoint/Best_Dice.pth.gz'))
-
-            train_list = create_list(args.data_path)
-            val_list = create_list(args.val_path)
-            test_list = create_list(args.test_path)
-
-            print("Checking accuracy on validation set")
-            Dice_val = check_accuracy_model(model, val_list, args.resample, args.new_resolution, args.patch_size[0],
-                                            args.patch_size[1], args.patch_size[2],
-                                            args.stride_inplane, args.stride_layer)
-
-            print("Checking accuracy on testing set")
-            Dice_test = check_accuracy_model(model, test_list, args.resample, args.new_resolution, args.patch_size[0],
-                                             args.patch_size[1], args.patch_size[2],
-                                             args.stride_inplane, args.stride_layer)
-
-            print("Checking accuracy on training set")
-            Dice_train = check_accuracy_model(model, train_list, args.resample, args.new_resolution, args.patch_size[0],
-                                              args.patch_size[1], args.patch_size[2],
-                                              args.stride_inplane, args.stride_layer)
-
-            print("Dice_val:", Dice_val, "Dice_test:", Dice_test, "Dice_train:", Dice_train)
-            '''
+    # return OrderedDict({'Train Loss': train_loss, 'Train dice0': train_dice0,
+    #                     'Train dice1': train_dice1, 'Train dice2': train_dice2})
+    return OrderedDict({'Train Loss': train_loss, 'Train dice0': train_dice0})
 
 
 if __name__ == '__main__':
-    parsers = InitParser()
-    main(parsers)
+    args = config.args
+    save_path = os.path.join('./trained_model', args.save)
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+    device = torch.device('cpu' if args.cpu else 'cuda')
+    # data info
+    train_set = VerseDataset(args.crop_size, args.resize_scale, args.dataset_path, mode='train')
+    val_set = VerseDataset(args.crop_size, args.resize_scale, args.dataset_path, mode='val')
+    train_loader = DataLoader(dataset=train_set, batch_size=args.batch_size, num_workers=1, shuffle=True)
+    val_loader = DataLoader(dataset=val_set, batch_size=args.batch_size, num_workers=1, shuffle=True)
+    # model info
+    model = UNet(1, [16, 32, 48, 64, 96], 3, net_mode='3d', conv_block=RecombinationBlock).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    init_util.print_network(model)
+    # model = nn.DataParallel(model, device_ids=[0,1])  # multi-GPU
+
+    log = logger.Logger(save_path)
+
+    best = [0, np.inf]  # 初始化最优模型的epoch和performance
+    trigger = 0  # early stop 计数器
+    for epoch in range(1, args.epochs + 1):
+        common.adjust_learning_rate(optimizer, epoch, args)
+        train_log = train(model, train_loader, optimizer)
+        val_log = val(model, val_loader)
+        log.update(epoch, train_log, val_log)
+
+        # Save checkpoint.
+        state = {'net': model.state_dict(), 'optimizer': optimizer.state_dict(), 'epoch': epoch}
+        torch.save(state, os.path.join(save_path, 'latest_model.pth'))
+        trigger += 1
+        if val_log['Val Loss'] < best[1]:
+            print('Saving best model')
+            torch.save(state, os.path.join(save_path, 'best_model.pth'))
+            best[0] = epoch
+            best[1] = val_log['Val Loss']
+            trigger = 0
+        print('Best performance at Epoch: {} | {}'.format(best[0], best[1]))
+        # early stopping
+        if args.early_stop is not None:
+            if trigger >= args.early_stop:
+                print("=> early stopping")
+                break
+        torch.cuda.empty_cache()
