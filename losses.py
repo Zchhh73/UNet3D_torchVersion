@@ -6,9 +6,6 @@ import torch.nn.functional as F
 from scipy.ndimage import morphology
 
 
-
-
-
 class BinaryDiceLoss(nn.Module):
     """Dice loss of binary class"""
 

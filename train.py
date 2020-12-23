@@ -84,9 +84,9 @@ def train(model, train_loader, optimizer):
 
 if __name__ == '__main__':
     args = config.args
-    save_path = os.path.join('./trained_model', args.save)
+    save_path = os.path.join('trained_model', args.save)
     if not os.path.exists(save_path):
-        os.mkdir(save_path)
+        os.makedirs(save_path)
     device = torch.device('cpu' if args.cpu else 'cuda')
     # data info
     train_set = VerseDataset(args.crop_size, args.resize_scale, args.dataset_path, mode='train')
