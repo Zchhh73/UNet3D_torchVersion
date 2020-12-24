@@ -1,97 +1,160 @@
 import numpy as np
-import os
 import SimpleITK as sitk
-import random
-from scipy import ndimage
+import os
+from utils.util import check_dir
+
+root_path = r'D:\3Ddata\fixed_data\train\data'
+root_mask_path = r'D:\3Ddata\fixed_data\train\label'
+
+trainImage = r"D:\3Ddata\dataset\Verse\trainImage"
+trainMask = r"D:\3Ddata\dataset\Verse\trainMask"
 
 
-class VerseFix:
-    def __init__(self, dataset_path, fix_dataset_path):
-        self.root_path = dataset_path
-        self.fix_path = fix_dataset_path
+def normalize(slice, bottom=99, down=1):
+    """
+    normalize image with mean and std for regionnonzero,and clip the value into range
+    :param slice:
+    :param bottom:
+    :param down:
+    :return:
+    """
+    b = np.percentile(slice, bottom)
+    t = np.percentile(slice, down)
+    slice = np.clip(slice, t, b)
 
-        if not os.path.exists(self.fix_path):
-            os.makedirs(self.fix_path + 'data')
-            os.makedirs(self.fix_path + 'label')
-
-        # 对原始图像进行修剪并保存
-        self.fix_data()
-        # 创建索引txt文件
-        self.write_train_val_test_name_list()
-
-    def fix_data(self):
-        upper = 450
-        lower = 200
-        expand_slice = 10  # 轴向外侧扩张的slice数量
-        size = 48  # 取样的slice数量
-        print('the raw dataset total numbers of samples is :', len(os.listdir(self.root_path + 'data')))
-        for ct_file in os.listdir(self.root_path + 'data/'):
-            ct = sitk.ReadImage(os.path.join(self.root_path + 'data/', ct_file), sitk.sitkInt16)
-            ct_array = sitk.GetArrayFromImage(ct)
-            seg = sitk.ReadImage(os.path.join(self.root_path + 'label/', ct_file.replace('image', 'mask')),
-                                 sitk.sitkInt8)
-            seg_array = sitk.GetArrayFromImage(seg)
-            print(ct_array.shape, seg_array.shape)
-            # 将灰度值在阈值之外的截断掉
-            ct_array[ct_array > upper] = upper
-            ct_array[ct_array < lower] = lower
-            # 找到肝脏区域开始和结束的slice，并各向外扩张
-            z = np.any(seg_array, axis=(1, 2))
-            start_slice, end_slice = np.where(z)[0][[0, -1]]
-            # 两个方向上各扩张个slice
-            if start_slice - expand_slice < 0:
-                start_slice = 0
-            else:
-                start_slice -= expand_slice
-
-            if end_slice + expand_slice >= seg_array.shape[0]:
-                end_slice = seg_array.shape[0] - 1
-
-            else:
-                end_slice += expand_slice
-            print(str(start_slice) + '--' + str(end_slice))
-            # 如果这时候剩下的slice数量不足size，直接放弃，这样的数据很少
-            if end_slice - start_slice + 1 < size:
-                print(ct_file, 'too little slice，give up the sample')
-                continue
-
-            ct_array = ct_array[start_slice:end_slice + 1, :, :]
-            seg_array = sitk.GetArrayFromImage(seg)
-            seg_array = seg_array[start_slice:end_slice + 1, :, :]
-
-            new_ct = sitk.GetImageFromArray(ct_array)
-            new_seg = sitk.GetImageFromArray(seg_array)
-            sitk.WriteImage(new_ct, os.path.join(self.fix_path + 'data/', ct_file))
-            sitk.WriteImage(new_seg, os.path.join(self.fix_path + 'label/', ct_file.replace('image', 'mask')))
-
-    def write_train_val_test_name_list(self):
-        data_name_list = os.listdir(self.fix_path + "/" + "data")
-        data_num = len(data_name_list)
-        print('the fixed dataset total numbers of samples is :', data_num)
-        random.shuffle(data_name_list)
-
-        train_rate = 0.8
-        val_rate = 0.2
-
-        assert val_rate + train_rate == 1.0
-        train_name_list = data_name_list[0:int(data_num * train_rate)]
-        val_name_list = data_name_list[int(data_num * train_rate):int(data_num * (train_rate + val_rate))]
-
-        self.write_name_list(train_name_list, "train_name_list.txt")
-        self.write_name_list(val_name_list, "val_name_list.txt")
-
-    def write_name_list(self, name_list, file_name):
-        f = open(self.fix_path + file_name, 'w')
-        for i in range(len(name_list)):
-            f.write(str(name_list[i]) + "\n")
-        f.close()
+    image_nonzero = slice[np.nonzero(slice)]
+    if np.std(slice) == 0 or np.std(image_nonzero) == 0:
+        return slice
+    else:
+        tmp = (slice - np.mean(image_nonzero)) / np.std(image_nonzero)
+        # since the range of intensities is between 0 and 5000 ,
+        # the min in the normalized slice corresponds to 0 intensity in unnormalized slice
+        # the min is replaced with -9 just to keep track of 0 intensities
+        # so that we can discard those intensities afterwards when sampling random patches
+        tmp[tmp == tmp.min()] = -9
+        return tmp
 
 
-def main():
-    root_path = r'D:/3Ddata/Verse_batch2/'
-    fix_path = r'D:/3Ddata/fixed_data/train/'
-    VerseFix(root_path, fix_path)
+def crop_ceter(img, croph, cropw):
+    # for n_slice in range(img.shape[0]):
+    height, width = img[0].shape
+    starth = height // 2 - (croph // 2)
+    startw = width // 2 - (cropw // 2)
+    return img[:, starth:starth + croph, startw:startw + cropw]
 
 
 if __name__ == '__main__':
-    main()
+    check_dir(trainImage)
+    check_dir(trainMask)
+    BLOCK_SIZE = BLOCKSIZE = (32, 160, 160)
+    for index in range(len(os.listdir(root_path))):
+        print(os.path.join(root_path, "image" + str(index) + ".nii.gz"))
+        # 1、读取数据
+        img_path = os.path.join(root_path, "image" + str(index) + ".nii.gz")
+        mask_path = os.path.join(root_mask_path, "mask" + str(index) + ".nii.gz")
+        img_src = sitk.ReadImage(img_path, sitk.sitkInt16)
+        mask_src = sitk.ReadImage(mask_path, sitk.sitkUInt8)
+        img_array = sitk.GetArrayFromImage(img_src)
+        mask_array = sitk.GetArrayFromImage(mask_src)
+        # 2、对四个模态分别进行标准化
+        img_array_nor = normalize(img_array)
+        # 3、裁剪
+        img_crop = crop_ceter(img_array_nor, 160, 160)
+        mask_crop = crop_ceter(mask_array, 160, 160)
+        # 4、分块处理
+        patch_block_size = BLOCKSIZE
+        numberxy = patch_block_size[1]
+        numberz = 8  # patch_block_size[0]
+        width = np.shape(img_crop)[1]
+        height = np.shape(img_crop)[2]
+        imagez = np.shape(img_crop)[0]
+        block_width = np.array(patch_block_size)[1]
+        block_height = np.array(patch_block_size)[2]
+        blockz = np.array(patch_block_size)[0]
+        stridewidth = (width - block_width) // numberxy
+        strideheight = (height - block_height) // numberxy
+        stridez = (imagez - blockz) // numberz
+        step_width = width - (stridewidth * numberxy + block_width)
+        step_width = step_width // 2
+        step_height = height - (strideheight * numberxy + block_height)
+        step_height = step_height // 2
+        step_z = imagez - (stridez * numberz + blockz)
+        step_z = step_z // 2
+        hr_img_samples_list = []
+        hr_mask_samples_list = []
+        patchnum = []
+        for z in range(step_z, numberz * (stridez + 1) + step_z, numberz):
+            for x in range(step_width, numberxy * (stridewidth + 1) + step_width, numberxy):
+                for y in range(step_height, numberxy * (strideheight + 1) + step_height, numberxy):
+                    if np.max(mask_crop[z:z + blockz, x:x + block_width, y:y + block_height]) != 0:
+                        print("切%d" % z)
+                        patchnum.append(z)
+                        hr_img_samples_list.append(img_crop[z:z + blockz, x:x + block_width, y:y + block_height])
+                        hr_mask_samples_list.append(mask_crop[z:z + blockz, x:x + block_width, y:y + block_height])
+        samples_img = np.array(hr_img_samples_list).reshape(
+            (len(hr_img_samples_list), blockz, block_width, block_height))
+        mask_samples = np.array(hr_mask_samples_list).reshape(
+            (len(hr_mask_samples_list), blockz, block_width, block_height))
+        samples, imagez, height, width = np.shape(samples_img)[0], np.shape(samples_img)[1], \
+                                         np.shape(samples_img)[2], np.shape(samples_img)[3]
+        print("samples:" + str(samples))
+        print("imagez:" + str(imagez))
+        print("height:" + str(height))
+        print("width:" + str(width))
+
+        for j in range(samples):
+            imagearray = np.zeros((imagez, height, width, 3), np.float)
+            datapath = os.path.join(trainImage, "image" + str(index) + "_" + str(patchnum[j]) + ".npy")
+            maskpath = os.path.join(trainMask, "mask" + str(index) + "_" + str(patchnum[j]) + ".npy")
+            image = samples_img[j, :, :, :]
+            image = image.astype(np.float)
+            np.save(datapath, imagearray)
+            print(datapath + "处理完成")
+            MaskArray = np.zeros((imagez, height, width, 3), np.uint8)
+            mask_one_sample = mask_samples[j, :, :, :]
+            np.save(maskpath, MaskArray)
+            print(maskpath + "处理完成")
+        '''
+        
+        # 5、合并和保存
+        for j in range(samples):
+            """
+            merage 4 model image into 4 channel (imagez,width,height,channel)
+            """
+            imagearray = np.zeros((imagez, height, width, 1), np.float)
+            filepath1 = os.path.join(trainImage, "image" + str(index) + "_" + str(patchnum[j]) + ".npy")
+            filepath = os.path.join(trainMask, "mask" + str(index) + "_" + str(patchnum[j]) + ".npy")
+            image = samples_img[j, :, :, :]
+            image = image.astype(np.float)
+            imagearray[:, :, :, 0] = image
+            # t1image = samples_t1[j, :, :, :]
+            # t1image = t1image.astype(np.float)
+            # fourmodelimagearray[:, :, :, 1] = t1image
+            # t1ceimage = samples_t1ce[j, :, :, :]
+            # t1ceimage = t1ceimage.astype(np.float)
+            # fourmodelimagearray[:, :, :, 2] = t1ceimage
+            # t2image = samples_t2[j, :, :, :]
+            # t2image = t2image.astype(np.float)
+            # fourmodelimagearray[:, :, :, 3] = t2image
+            np.save(filepath1, imagearray)
+
+            MaskArray = np.zeros((imagez, height, width, 3), np.uint8)
+            mask_one_sample = mask_samples[j, :, :, :]
+            WT_Label = mask_one_sample.copy()
+            WT_Label[mask_one_sample == 1] = 1.
+            WT_Label[mask_one_sample == 2] = 1.
+            WT_Label[mask_one_sample == 4] = 1.
+            TC_Label = mask_one_sample.copy()
+            TC_Label[mask_one_sample == 1] = 1.
+            TC_Label[mask_one_sample == 2] = 0.
+            TC_Label[mask_one_sample == 4] = 1.
+            ET_Label = mask_one_sample.copy()
+            ET_Label[mask_one_sample == 1] = 0.
+            ET_Label[mask_one_sample == 2] = 0.
+            ET_Label[mask_one_sample == 4] = 1.
+            wt_tc_etMaskArray[:, :, :, 0] = WT_Label
+            wt_tc_etMaskArray[:, :, :, 1] = TC_Label
+            wt_tc_etMaskArray[:, :, :, 2] = ET_Label
+            np.save(filepath, wt_tc_etMaskArray)
+        '''
+    print("Done!")

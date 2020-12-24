@@ -1,117 +1,155 @@
-import torch.nn as nn
-import torch.nn.functional as F
+import numpy as np
+
 import torch
+import torch.nn.functional as F
 
 
-def cross_entropy_2D(input, target, weight=None, size_average=True):
-    n, c, h, w = input.size()
-    log_p = F.log_softmax(input, dim=1)
-    log_p = log_p.transpose(1, 2).transpose(2, 3).contiguous().view(-1, c)
-    target = target.view(target.numel())
-    loss = F.nll_loss(log_p, target, weight=weight, size_average=False)
-    if size_average:
-        loss /= float(target.numel())
-    return loss
+def mean_iou(y_true_in, y_pred_in, print_table=False):
+    if True:  # not np.sum(y_true_in.flatten()) == 0:
+        labels = y_true_in
+        y_pred = y_pred_in
 
+        true_objects = 2
+        pred_objects = 2
 
-def cross_entropy_3D(input, target, weight=None, size_average=True):
-    n, c, h, w, s = input.size()
-    log_p = F.log_softmax(input, dim=1)
-    log_p = log_p.transpose(1, 2).transpose(2, 3).transpose(3, 4).contiguous().view(-1, c)
-    target = target.view(target.numel())
-    loss = F.nll_loss(log_p, target, weight=weight, size_average=False)
-    if size_average:
-        loss /= float(target.numel())
-    return loss
+        intersection = np.histogram2d(labels.flatten(), y_pred.flatten(), bins=(true_objects, pred_objects))[0]
 
+        # Compute areas (needed for finding the union between all objects)
+        area_true = np.histogram(labels, bins=true_objects)[0]
+        area_pred = np.histogram(y_pred, bins=pred_objects)[0]
+        area_true = np.expand_dims(area_true, -1)
+        area_pred = np.expand_dims(area_pred, 0)
 
-class SoftDiceLoss(nn.Module):
-    def __init__(self, weight=None, size_average=True):
-        super(SoftDiceLoss, self).__init__()
+        # Compute union
+        union = area_true + area_pred - intersection
 
-    def forward(self, logits, targets):
-        num = targets.size(0)
-        smooth = 1
+        # Exclude background from the analysis
+        intersection = intersection[1:, 1:]
+        union = union[1:, 1:]
+        union[union == 0] = 1e-9
 
-        probs = F.sigmoid(logits)
-        m1 = probs.view(num, -1)
-        m2 = targets.view(num, -1)
-        intersection = (m1 * m2)
+        # Compute the intersection over union
+        iou = intersection / union
 
-        score = 2. * (intersection.sum(1) + smooth) / (m1.sum(1) + m2.sum(1) + smooth)
-        score = 1 - score.sum() / num
-        return score
+        # Precision helper function
+        def precision_at(threshold, iou):
+            matches = iou > threshold
+            true_positives = np.sum(matches, axis=1) == 1  # Correct objects
+            false_positives = np.sum(matches, axis=0) == 0  # Missed objects
+            false_negatives = np.sum(matches, axis=1) == 0  # Extra objects
+            tp, fp, fn = np.sum(true_positives), np.sum(false_positives), np.sum(false_negatives)
+            return tp, fp, fn
 
-
-class DiceMean(nn.Module):
-    def __init__(self):
-        super(DiceMean, self).__init__()
-
-    def forward(self, logits, targets):
-        class_num = logits.size(1)
-
-        dice_sum = 0
-        for i in range(class_num):
-            inter = torch.sum(logits[:, i, :, :, :] * targets[:, i, :, :, :])
-            union = torch.sum(logits[:, i, :, :, :]) + torch.sum(targets[:, i, :, :, :])
-            dice = (2. * inter + 1) / (union + 1)
-            dice_sum += dice
-        return dice_sum / class_num
-
-
-class DiceMeanLoss(nn.Module):
-    def __init__(self):
-        super(DiceMeanLoss, self).__init__()
-
-    def forward(self, logits, targets):
-        class_num = logits.size()[1]
-
-        dice_sum = 0
-        for i in range(class_num):
-            inter = torch.sum(logits[:, i, :, :, :] * targets[:, i, :, :, :])
-            union = torch.sum(logits[:, i, :, :, :]) + torch.sum(targets[:, i, :, :, :])
-            dice = (2. * inter + 1) / (union + 1)
-            dice_sum += dice
-        return 1 - dice_sum / class_num
-
-
-class WeightDiceLoss(nn.Module):
-    def __init__(self):
-        super(WeightDiceLoss, self).__init__()
-
-    def forward(self, logits, targets):
-
-        num_sum = torch.sum(targets, dim=(0, 2, 3, 4))
-        w = torch.Tensor([0.2, 0.5, 0.3]).cuda()
-        for i in range(targets.size(1)):
-            if (num_sum[i] < 1):
-                w[i] = 0
+        # Loop over IoU thresholds
+        prec = []
+        if print_table:
+            print("Thresh\tTP\tFP\tFN\tPrec.")
+        for t in np.arange(0.5, 1.0, 0.05):
+            tp, fp, fn = precision_at(t, iou)
+            if (tp + fp + fn) > 0:
+                p = tp / (tp + fp + fn)
             else:
-                w[i] = (0.1 * num_sum[i] + num_sum[i - 1] + num_sum[i - 2] + 1) / (torch.sum(num_sum) + 1)
-        # print(w)
-        inter = w * torch.sum(targets * logits, dim=(0, 2, 3, 4))
-        inter = torch.sum(inter)
+                p = 0
+            if print_table:
+                print("{:1.3f}\t{}\t{}\t{}\t{:1.3f}".format(t, tp, fp, fn, p))
+            prec.append(p)
 
-        union = w * torch.sum(targets + logits, dim=(0, 2, 3, 4))
-        union = torch.sum(union)
-
-        return 1 - 2. * inter / union
-
-
-def dice(logits, targets, class_index):
-    inter = torch.sum(logits[:, class_index, :, :, :] * targets[:, class_index, :, :, :])
-    union = torch.sum(logits[:, class_index, :, :, :]) + torch.sum(targets[:, class_index, :, :, :])
-    dice = (2. * inter + 1) / (union + 1)
-    return dice
+        if print_table:
+            print("AP\t-\t-\t-\t{:1.3f}".format(np.mean(prec)))
+        return np.mean(prec)
 
 
-def T(logits, targets):
-    return torch.sum(targets[:, 2, :, :, :])
+def batch_iou(output, target):
+    output = torch.sigmoid(output).data.cpu().numpy() > 0.5
+    target = (target.data.cpu().numpy() > 0.5).astype('int')
+    output = output[:, 0, :, :]
+    target = target[:, 0, :, :]
+
+    ious = []
+    for i in range(output.shape[0]):
+        ious.append(mean_iou(output[i], target[i]))
+
+    return np.mean(ious)
 
 
-def P(logits, targets):
-    return torch.sum(logits[:, 2, :, :, :])
+def mean_iou(output, target):
+    smooth = 1e-5
+
+    output = torch.sigmoid(output).data.cpu().numpy()
+    target = target.data.cpu().numpy()
+    ious = []
+    for t in np.arange(0.5, 1.0, 0.05):
+        output_ = output > t
+        target_ = target > t
+        intersection = (output_ & target_).sum()
+        union = (output_ | target_).sum()
+        iou = (intersection + smooth) / (union + smooth)
+        ious.append(iou)
+
+    return np.mean(ious)
 
 
-def TP(logits, targets):
-    return torch.sum(targets[:, 2, :, :, :] * logits[:, 2, :, :, :])
+def iou_score(output, target):
+    smooth = 1e-5
+
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    output_ = output > 0.5
+    target_ = target > 0.5
+    intersection = (output_ & target_).sum()
+    union = (output_ | target_).sum()
+
+    return (intersection + smooth) / (union + smooth)
+
+
+def dice_coef(output, target):
+    smooth = 1e-5
+
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    # output = torch.sigmoid(output).view(-1).data.cpu().numpy()
+    # target = target.view(-1).data.cpu().numpy()
+
+    intersection = (output * target).sum()
+
+    return (2. * intersection + smooth) / \
+           (output.sum() + target.sum() + smooth)
+
+
+def accuracy(output, target):
+    output = torch.sigmoid(output).view(-1).data.cpu().numpy()
+    output = (np.round(output)).astype('int')
+    target = target.view(-1).data.cpu().numpy()
+    target = (np.round(target)).astype('int')
+    (output == target).sum()
+
+    return (output == target).sum() / len(output)
+
+
+def ppv(output, target):
+    smooth = 1e-5
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+    intersection = (output * target).sum()
+    return (intersection + smooth) / \
+           (output.sum() + smooth)
+
+
+def sensitivity(output, target):
+    smooth = 1e-5
+
+    if torch.is_tensor(output):
+        output = torch.sigmoid(output).data.cpu().numpy()
+    if torch.is_tensor(target):
+        target = target.data.cpu().numpy()
+
+    intersection = (output * target).sum()
+
+    return (intersection + smooth) / \
+           (target.sum() + smooth)

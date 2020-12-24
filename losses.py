@@ -5,52 +5,60 @@ import numpy as np
 import torch.nn.functional as F
 from scipy.ndimage import morphology
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
 
-class BinaryDiceLoss(nn.Module):
-    """Dice loss of binary class"""
+try:
+    from LovaszSoftmax.pytorch.lovasz_losses import lovasz_hinge
+except ImportError:
+    pass
 
-    def __init__(self, smooth=1, p=2):
-        super(BinaryDiceLoss, self).__init__()
-        self.smooth = smooth
-        self.p = p
 
-    def forward(self, predict, target):
-        assert predict.shape[0] == target.shape[0], "predict & target batch size don't match"
-        predict = predict.contiguous().view(predict.shape[0], -1)
-        target = target.contiguous().view(target.shape[0], -1)
+class BCEDiceLoss(nn.Module):
+    def __init__(self):
+        super(BCEDiceLoss, self).__init__()
 
-        num = torch.sum(torch.mul(predict, target)) * 2 + self.smooth
-        den = torch.sum(predict.pow(self.p) + target.pow(self.p)) + self.smooth
-
-        dice = num / den
-        loss = 1 - dice
-        return loss
+    def forward(self, input, target):
+        bce = F.binary_cross_entropy_with_logits(input, target)
+        smooth = 1e-5
+        input = torch.sigmoid(input)
+        num = target.size(0)
+        input = input.view(num, -1)
+        target = target.view(num, -1)
+        intersection = (input * target)
+        dice = (2. * intersection.sum(1) + smooth) / (input.sum(1) + target.sum(1) + smooth)
+        dice = 1 - dice.sum() / num
+        return 0.5 * bce + dice
 
 
 class DiceLoss(nn.Module):
-    """
-    Dice loss, need one hot encode input
-    """
-
-    def __init__(self, weight=None, ignore_index=None, **kwargs):
+    def __init__(self):
         super(DiceLoss, self).__init__()
-        self.kwargs = kwargs
-        self.weight = weight
-        self.ignore_index = ignore_index
+        self.epsilon = 1e-5
 
     def forward(self, predict, target):
-        assert predict.shape == target.shape, 'predict & target shape do not match'
-        dice = BinaryDiceLoss(**self.kwargs)
-        total_loss = 0
-        predict = F.softmax(predict, dim=1)
+        assert predict.size() == target.size(), "the size of predict and target must be equal."
+        num = predict.size(0)
 
-        for i in range(target.shape[1]):
-            if i != self.ignore_index:
-                dice_loss = dice(predict[:, i], target[:, i])
-                if self.weight is not None:
-                    assert self.weight.shape[0] == target.shape[1], \
-                        'Expect weight shape [{}], get[{}]'.format(target.shape[1], self.weight.shape[0])
-                    dice_loss *= self.weights[i]
-                total_loss += dice_loss
+        pre = torch.sigmoid(predict).view(num, -1)
+        tar = target.view(num, -1)
+        # 利用预测值与标签相乘作交集
+        intersection = (pre * tar).sum(-1).sum()
+        union = (pre + tar).sum(-1).sum()
 
-        return total_loss / target.shape[1]
+        score = 1 - 2 * (intersection + self.epsilon) / (union + self.epsilon)
+        return score
+
+
+class LovaszHingeLoss(nn.Module):
+    def __init__(self):
+        super(LovaszHingeLoss, self).__init__()
+
+    def forward(self, input, target):
+        input = input.squeeze(1)
+        target = target.squeeze(1)
+        loss = lovasz_hinge(input, target, per_image=True)
+
+        return loss
