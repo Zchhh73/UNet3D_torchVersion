@@ -32,7 +32,7 @@ from dataset.VerseDataSet import VerseDataSet
 import models.VNet.model as vnet
 from metrics import dice_coef, batch_iou, mean_iou, iou_score
 import losses
-from utils.util import str2bool, count_params
+from utils.common import str2bool, count_params
 import pandas as pd
 
 arch_names = list(vnet.__dict__.keys())

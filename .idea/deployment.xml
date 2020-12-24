@@ -9,6 +9,13 @@
           </mappings>
         </serverdata>
       </paths>
+      <paths name="remote-3D">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/chenkecheng/zchhh/UNet3D_torchVersion" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
       <paths name="root@bob.geeekvr.com:8079">
         <serverdata>
           <mappings>

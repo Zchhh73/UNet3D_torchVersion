@@ -1,13 +1,13 @@
 import numpy as np
 import SimpleITK as sitk
 import os
-from utils.util import check_dir
+from utils.common import check_dir
 
-root_path = r'D:\3Ddata\fixed_data\train\data'
-root_mask_path = r'D:\3Ddata\fixed_data\train\label'
+root_path = r'/hdd/chenkecheng/zchhh_data/3Dtrain/fixed_data/train/data'
+root_mask_path = r'/hdd/chenkecheng/zchhh_data/3Dtrain/fixed_data/train/label'
 
-trainImage = r"D:\3Ddata\dataset\Verse\trainImage"
-trainMask = r"D:\3Ddata\dataset\Verse\trainMask"
+trainImage = r"/hdd/chenkecheng/zchhh_data/VerseData/trainImage"
+trainMask = r"/hdd/chenkecheng/zchhh_data/VerseData/trainMask"
 
 
 def normalize(slice, bottom=99, down=1):
@@ -43,7 +43,7 @@ def crop_ceter(img, croph, cropw):
     return img[:, starth:starth + croph, startw:startw + cropw]
 
 
-if __name__ == '__main__':
+def preprocess():
     check_dir(trainImage)
     check_dir(trainMask)
     BLOCK_SIZE = BLOCKSIZE = (32, 160, 160)
@@ -114,47 +114,9 @@ if __name__ == '__main__':
             mask_one_sample = mask_samples[j, :, :, :]
             np.save(maskpath, MaskArray)
             print(maskpath + "处理完成")
-        '''
-        
-        # 5、合并和保存
-        for j in range(samples):
-            """
-            merage 4 model image into 4 channel (imagez,width,height,channel)
-            """
-            imagearray = np.zeros((imagez, height, width, 1), np.float)
-            filepath1 = os.path.join(trainImage, "image" + str(index) + "_" + str(patchnum[j]) + ".npy")
-            filepath = os.path.join(trainMask, "mask" + str(index) + "_" + str(patchnum[j]) + ".npy")
-            image = samples_img[j, :, :, :]
-            image = image.astype(np.float)
-            imagearray[:, :, :, 0] = image
-            # t1image = samples_t1[j, :, :, :]
-            # t1image = t1image.astype(np.float)
-            # fourmodelimagearray[:, :, :, 1] = t1image
-            # t1ceimage = samples_t1ce[j, :, :, :]
-            # t1ceimage = t1ceimage.astype(np.float)
-            # fourmodelimagearray[:, :, :, 2] = t1ceimage
-            # t2image = samples_t2[j, :, :, :]
-            # t2image = t2image.astype(np.float)
-            # fourmodelimagearray[:, :, :, 3] = t2image
-            np.save(filepath1, imagearray)
 
-            MaskArray = np.zeros((imagez, height, width, 3), np.uint8)
-            mask_one_sample = mask_samples[j, :, :, :]
-            WT_Label = mask_one_sample.copy()
-            WT_Label[mask_one_sample == 1] = 1.
-            WT_Label[mask_one_sample == 2] = 1.
-            WT_Label[mask_one_sample == 4] = 1.
-            TC_Label = mask_one_sample.copy()
-            TC_Label[mask_one_sample == 1] = 1.
-            TC_Label[mask_one_sample == 2] = 0.
-            TC_Label[mask_one_sample == 4] = 1.
-            ET_Label = mask_one_sample.copy()
-            ET_Label[mask_one_sample == 1] = 0.
-            ET_Label[mask_one_sample == 2] = 0.
-            ET_Label[mask_one_sample == 4] = 1.
-            wt_tc_etMaskArray[:, :, :, 0] = WT_Label
-            wt_tc_etMaskArray[:, :, :, 1] = TC_Label
-            wt_tc_etMaskArray[:, :, :, 2] = ET_Label
-            np.save(filepath, wt_tc_etMaskArray)
-        '''
     print("Done!")
+
+
+if __name__ == '__main__':
+    preprocess()
