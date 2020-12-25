@@ -1,6 +1,7 @@
 import numpy as np
 import SimpleITK as sitk
 import os
+import matplotlib.pyplot as plt
 from utils.common import check_dir
 
 root_path = r'/hdd/chenkecheng/zchhh_data/3Dtrain/fixed_data/train/data'
@@ -56,7 +57,7 @@ def preprocess():
         mask_src = sitk.ReadImage(mask_path, sitk.sitkUInt8)
         img_array = sitk.GetArrayFromImage(img_src)
         mask_array = sitk.GetArrayFromImage(mask_src)
-        # 2、对四个模态分别进行标准化
+        # 2、进行标准化
         img_array_nor = normalize(img_array)
         # 3、裁剪
         img_crop = crop_ceter(img_array_nor, 160, 160)
@@ -108,11 +109,17 @@ def preprocess():
             maskpath = os.path.join(trainMask, "mask" + str(index) + "_" + str(patchnum[j]) + ".npy")
             image = samples_img[j, :, :, :]
             image = image.astype(np.float)
+            imagearray[:, :, :, 0] = image
+            imagearray[:, :, :, 1] = image
+            imagearray[:, :, :, 2] = image
             np.save(datapath, imagearray)
             print(datapath + "处理完成")
-            MaskArray = np.zeros((imagez, height, width, 3), np.uint8)
-            mask_one_sample = mask_samples[j, :, :, :]
-            np.save(maskpath, MaskArray)
+            maskarray = np.zeros((imagez, height, width, 3), np.uint8)
+            mask = mask_samples[j, :, :, :]
+            maskarray[:, :, :, 0] = mask
+            maskarray[:, :, :, 1] = mask
+            maskarray[:, :, :, 2] = mask
+            np.save(maskpath, maskarray)
             print(maskpath + "处理完成")
 
     print("Done!")
