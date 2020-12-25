@@ -47,7 +47,7 @@ def crop_ceter(img, croph, cropw):
 def preprocess():
     check_dir(trainImage)
     check_dir(trainMask)
-    BLOCK_SIZE = BLOCKSIZE = (32, 160, 160)
+    BLOCKSIZE = (32, 160, 160)
     for index in range(len(os.listdir(root_path))):
         print(os.path.join(root_path, "image" + str(index) + ".nii.gz"))
         # 1、读取数据
@@ -123,6 +123,10 @@ def preprocess():
             print(maskpath + "处理完成")
 
     print("Done!")
+
+
+def nii2npy(path):
+    pass
 
 
 if __name__ == '__main__':
