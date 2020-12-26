@@ -3,10 +3,10 @@ from skimage import transform
 import nibabel as nib
 import numpy as np
 import SimpleITK as sitk
+import torch
 
-
-data_path = r'D:\3Ddata\Verse_batch1\data'
-mask_path = r'D:\3Ddata\Verse_batch1\label'
+data_path = r'D:\data\Verse_batch2\data'
+mask_path = r'D:\data\Verse_batch2\label'
 
 
 # read data
@@ -26,6 +26,23 @@ def read_data(datapath, maskpath):
     for i in range(len(data_all)):
         new_data.append(sitk.GetArrayFromImage(sitk.ReadImage(datapath + '/' + data_all[i])))
         new_label.append(sitk.GetArrayFromImage(sitk.ReadImage(maskpath + '/' + label_all[i])))
+        print("******verse data compare******")
+        print("num{}, data_name:{}: data shape:{}, label shape:{}; Pixel -- data_max:{}, data_min:{}, "
+              "label_max:{}, label_min:{} "
+              .format(i, data_all[i].split('.')[0],
+                      new_data[i].shape, new_label[i].shape,
+                      new_data[i].max(), new_data[i].min(),
+                      new_label[i].max(), new_label[i].min()))
+        print("===***===" * 10)
+
+        a, b, c = new_data[i].shape
+        la, lb, lc = new_label[i].shape
+        if a != la or b != lb or c != lc:
+            print('data different label size :{}'.format(data_all[i].split('/')[-1].split(".")[0]))
+
+        if new_label[i].max() == 25:
+            print('&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&label is 25 data'.format(
+                data_all[i].split('/')[-1].split(".")[0]))
 
     return new_data, new_label
 
@@ -41,23 +58,24 @@ def normalize(image, label):
         # image[i] = (image[i] - MIN_BOUND) / (MAX_BOUND - MIN_BOUND)
         # image[i][image[i] > 1] = 1
         # image[i][image[i] < 0] = 0
-        image[i] = transform.resize(image[i].astype(np.float32), (64, 128, 96))  # size need to set up d
-
-        label[i] = transform.resize(label[i].astype(np.uint8), (64, 128, 96))
+        image[i] = transform.resize(image[i].astype(np.float32), (64, 128, 128))  # size need to set up d
+        label[i] = transform.resize(label[i].astype(np.uint8), (64, 128, 128))
 
     image = (image - np.mean(image)) / (np.std(image))
 
-    image = np.array(image)
+    image = np.array(image)  # B,D,H,W
     label = np.array(label)
-    image = np.transpose(image, (0, 2, 3, 1))
-    label = np.transpose(label, (0, 2, 3, 1))
+    # image = np.transpose(image, (0, 2, 3, 1))  # B,H,W,D
+    # label = np.transpose(label, (0, 2, 3, 1))
+    print(image.shape)
+    print(label.shape)
 
     image = (image * 255).astype(np.float32)
-    image = image[np.newaxis, :]
-    image = np.transpose(image, (1, 2, 3, 4, 0))
+    image = image[np.newaxis, :]  # C,B,D,H,W
+    image = np.transpose(image, (1, 0, 2, 3, 4))  # B,C,D,H,W
 
-    label = label[np.newaxis, :]
-    label = np.transpose(label, (1, 2, 3, 4, 0))
+    label = label[np.newaxis, :]  # C,B,D,H,W
+    label = np.transpose(label, (1, 0, 2, 3, 4))  # B,C,D,H,W
     label = (label * 255).astype(np.uint8)
     # label[label == 25] = 24  # one-hot encode the target
     # binary class
@@ -68,17 +86,26 @@ def normalize(image, label):
     # label[label > 0] = 1
     shp = label.shape[0]
     print(shp)
-    label = label.reshape(-1)
-    print(label)
-    label = np_utils.to_categorical(label).astype(np.uint8)
+    # label = label.reshape(-1)
+    # print(label)
+    label = get_one_hot(label, 25)
     # label = label.reshape(shp, 128, 96, 64, 25)
-    label = label.reshape(shp, 128, 96, 64, 26)  # 0 2 3 1
+    label = label.reshape(shp, 128, 128, 64, 26)  # 0 2 3 1
     # label = label.reshape(shp, 128, 96, 64, 2)  # 0 2 3 1
 
     np.save("x_training", image.astype(np.float32))  # save data  np.float32
     np.save("y_training", label.astype(np.uint8))  # save label
 
     return image, label
+
+
+def get_one_hot(label, N):
+    shape = np.array(label.shape)
+    shape[1] = N
+    shape = tuple(shape)
+    result = torch.zeros(shape).cuda()
+    result = result.scatter_(1, label, 1)
+    return result
 
 
 def concatenate(x1, x2, x3, y1, y2, y3):
