@@ -26,8 +26,8 @@ class VerseDataSet(torch.utils.data.Dataset):
         mask_path = self.mask_paths[idx]
         npimage = np.load(img_path)
         npmask = np.load(mask_path)
-        npimage = npimage.transpose((3, 0, 1, 2))
-        npmask = npmask.transpose((3, 0, 1, 2))
+        # npimage = npimage.transpose((3, 0, 1, 2))
+        # npmask = npmask.transpose((3, 0, 1, 2))
         npmask = npmask.astype("float32")
         npimage = npimage.astype("float32")
 

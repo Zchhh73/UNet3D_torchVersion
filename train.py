@@ -29,13 +29,14 @@ import torchvision
 from torchvision import datasets, models, transforms
 
 from dataset.VerseDataSet import VerseDataSet
-import models.VNet.model as vnet
+import models.VNet.model as Vnet
+import models.UNet.model as Unet
 from metrics import dice_coef, batch_iou, mean_iou, iou_score
 import losses
 from utils.common import str2bool, count_params
 import pandas as pd
 
-arch_names = list(vnet.__dict__.keys())
+arch_names = list(Unet.__dict__.keys())
 loss_names = list(losses.__dict__.keys())
 loss_names.append('BCEWithLogitsLoss')
 
@@ -53,7 +54,7 @@ def parse_args():
     parser.add_argument('--deepsupervision', default=False, type=str2bool)
     parser.add_argument('--dataset', default="jiu0Monkey",
                         help='dataset name')
-    parser.add_argument('--input-channels', default=4, type=int,
+    parser.add_argument('--input-channels', default=3, type=int,
                         help='input channels')
     parser.add_argument('--image-ext', default='png',
                         help='image file extension')
@@ -194,7 +195,7 @@ def validate(args, val_loader, model, criterion):
 def main():
     args = parse_args()
     # args.dataset = "datasets"
-    os.environ['CUDA_VISIBLE_DEVICES'] = '6'
+    # os.environ['CUDA_VISIBLE_DEVICES'] = '6'
     if args.name is None:
         if args.deepsupervision:
             args.name = '%s_%s_%s_withDS' % (args.dataset, args.arch, args.loss)
@@ -223,8 +224,8 @@ def main():
     cudnn.benchmark = True
 
     # Data loading code
-    img_paths = glob(r'/hdd/chenkecheng/zchhh_data/3Dtrain/fixed_data/train/data/*')
-    mask_paths = glob(r'/hdd/chenkecheng/zchhh_data/3Dtrain/fixed_data/train/label/*')
+    img_paths = glob(r'F:\Verse_Data\Preprocessed\trainImage\*')
+    mask_paths = glob(r'F:\Verse_Data\Preprocessed\trainMask\*')
 
     train_img_paths, val_img_paths, train_mask_paths, val_mask_paths = \
         train_test_split(img_paths, mask_paths, test_size=0.2, random_state=41)
@@ -233,7 +234,7 @@ def main():
 
     # create model
     print("=> creating model %s" % args.arch)
-    model = vnet.__dict__[args.arch](args)
+    model = Unet.__dict__[args.arch](args)
     model = model.cuda()
     # model._initialize_weights()
     # model.load_state_dict(torch.load('model.pth'))

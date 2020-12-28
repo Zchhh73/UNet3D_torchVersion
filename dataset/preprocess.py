@@ -2,13 +2,17 @@ import numpy as np
 import SimpleITK as sitk
 import os
 import matplotlib.pyplot as plt
-from utils.common import check_dir
+from utils.common import *
+from torch.nn.functional import one_hot
 
-root_path = r'/hdd/chenkecheng/zchhh_data/3Dtrain/fixed_data/train/data'
-root_mask_path = r'/hdd/chenkecheng/zchhh_data/3Dtrain/fixed_data/train/label'
+root_path = r'F:\Verse_Data\fixed_path\data'
+root_mask_path = r'F:\Verse_Data\fixed_path\label'
 
-trainImage = r"/hdd/chenkecheng/zchhh_data/VerseData/trainImage"
-trainMask = r"/hdd/chenkecheng/zchhh_data/VerseData/trainMask"
+trainImage = r"F:\Verse_Data\Preprocessed\trainImage"
+trainMask = r"F:\Verse_Data\Preprocessed\trainMask"
+
+outputImage = r'F:\Verse_Data\Preprocessed\outputImage'
+outputmask = r'F:\Verse_Data\Preprocessed\outputMask'
 
 
 def normalize(slice, bottom=99, down=1):
@@ -47,25 +51,27 @@ def crop_ceter(img, croph, cropw):
 def preprocess():
     check_dir(trainImage)
     check_dir(trainMask)
-    BLOCKSIZE = (32, 160, 160)
+    check_dir(outputImage)
+    check_dir(outputmask)
+    BLOCKSIZE = (64, 128, 128)
     for index in range(len(os.listdir(root_path))):
         print(os.path.join(root_path, "image" + str(index) + ".nii.gz"))
         # 1、读取数据
         img_path = os.path.join(root_path, "image" + str(index) + ".nii.gz")
         mask_path = os.path.join(root_mask_path, "mask" + str(index) + ".nii.gz")
-        img_src = sitk.ReadImage(img_path, sitk.sitkInt16)
-        mask_src = sitk.ReadImage(mask_path, sitk.sitkUInt8)
+        img_src = sitk.ReadImage(img_path, sitk.sitkFloat64)
+        mask_src = sitk.ReadImage(mask_path, sitk.sitkInt64)
         img_array = sitk.GetArrayFromImage(img_src)
         mask_array = sitk.GetArrayFromImage(mask_src)
-        # 2、进行标准化
-        img_array_nor = normalize(img_array)
+        # # 2、进行标准化
+        # img_array_nor = normalize(img_array)
         # 3、裁剪
-        img_crop = crop_ceter(img_array_nor, 160, 160)
-        mask_crop = crop_ceter(mask_array, 160, 160)
+        img_crop = crop_ceter(img_array, 128, 128)
+        mask_crop = crop_ceter(mask_array, 128, 128)
         # 4、分块处理
         patch_block_size = BLOCKSIZE
         numberxy = patch_block_size[1]
-        numberz = 8  # patch_block_size[0]
+        numberz = 48  # patch_block_size[0]
         width = np.shape(img_crop)[1]
         height = np.shape(img_crop)[2]
         imagez = np.shape(img_crop)[0]
@@ -104,29 +110,29 @@ def preprocess():
         print("width:" + str(width))
 
         for j in range(samples):
-            imagearray = np.zeros((imagez, height, width, 3), np.float)
+            imagearray = np.zeros((1, imagez, height, width), np.float)
             datapath = os.path.join(trainImage, "image" + str(index) + "_" + str(patchnum[j]) + ".npy")
             maskpath = os.path.join(trainMask, "mask" + str(index) + "_" + str(patchnum[j]) + ".npy")
             image = samples_img[j, :, :, :]
             image = image.astype(np.float)
-            imagearray[:, :, :, 0] = image
-            imagearray[:, :, :, 1] = image
-            imagearray[:, :, :, 2] = image
+            imagearray[0, :, :, :] = image
             np.save(datapath, imagearray)
             print(datapath + "处理完成")
-            maskarray = np.zeros((imagez, height, width, 3), np.uint8)
+            # mask_tensor = np.zeros((1, imagez, height, width), np.uint8)
             mask = mask_samples[j, :, :, :]
-            maskarray[:, :, :, 0] = mask
-            maskarray[:, :, :, 1] = mask
-            maskarray[:, :, :, 2] = mask
-            np.save(maskpath, maskarray)
+            mask = torch.tensor(mask)
+            mask2one_hot = one_hot(mask, num_classes=26)
+            mask_npy = np.transpose(mask2one_hot.numpy(), (3, 0, 1, 2))
+            np.save(maskpath, mask_npy)
             print(maskpath + "处理完成")
 
+            # new_ct = sitk.GetImageFromArray(image)
+            # new_seg = sitk.GetImageFromArray(mask_npy)
+            # preed = "image" + str(index) + "_" + str(patchnum[j])
+            # sitk.WriteImage(new_ct, os.path.join(outputImage, preed + '.nii.gz'))
+            # sitk.WriteImage(new_seg, os.path.join(outputmask, preed.replace('image', 'mask') + '.nii.gz'))
+            # print(preed + "预处理后图片保存成功")
     print("Done!")
-
-
-def nii2npy(path):
-    pass
 
 
 if __name__ == '__main__':

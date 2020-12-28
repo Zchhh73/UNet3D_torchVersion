@@ -5,8 +5,8 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 
-data_path = r'D:\data\Verse_batch2\data'
-mask_path = r'D:\data\Verse_batch2\label'
+data_path = r'F:\Verse_Data\3Ddata\fixed_data\train\data'
+mask_path = r'F:\Verse_Data\3Ddata\fixed_data\train\label'
 
 
 # read data
@@ -88,24 +88,15 @@ def normalize(image, label):
     print(shp)
     # label = label.reshape(-1)
     # print(label)
-    label = get_one_hot(label, 25)
-    # label = label.reshape(shp, 128, 96, 64, 25)
-    label = label.reshape(shp, 128, 128, 64, 26)  # 0 2 3 1
-    # label = label.reshape(shp, 128, 96, 64, 2)  # 0 2 3 1
+    label = torch.nn.functional.one_hot(label, 25)
+    # label = label.reshape(shp, 128, 128, 64, 25)
+    label = label.reshape(shp, 128, 128, 64, 25)  # 0 2 3 1
+    # label = label.reshape(shp, 128, 128, 64, 2)  # 0 2 3 1
 
     np.save("x_training", image.astype(np.float32))  # save data  np.float32
     np.save("y_training", label.astype(np.uint8))  # save label
 
     return image, label
-
-
-def get_one_hot(label, N):
-    shape = np.array(label.shape)
-    shape[1] = N
-    shape = tuple(shape)
-    result = torch.zeros(shape).cuda()
-    result = result.scatter_(1, label, 1)
-    return result
 
 
 def concatenate(x1, x2, x3, y1, y2, y3):

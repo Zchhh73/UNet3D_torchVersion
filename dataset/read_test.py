@@ -2,8 +2,8 @@ import numpy as np
 import nibabel as nib
 import os
 
-data_path = r'D:\3Ddata\fixed_data\train\data'
-mask_path = r'D:\3Ddata\fixed_data\train\label'
+data_path = r'F:\Verse_Data\Data\Verse_train\data'
+mask_path = r'F:\Verse_Data\Data\Verse_train\label'
 
 
 def read_data(data_path):
@@ -23,8 +23,8 @@ def read_data(data_path):
     b_list = []
     c_list = []
     for i in range(len(data_all)):
-        data_read.append(nib.load(os.path.join(data_path, data_all[i])).get_data())
-        label_read.append(nib.load(os.path.join(mask_path, label_all[i])).get_data())
+        data_read.append(nib.load(os.path.join(data_path, data_all[i])).get_fdata())
+        label_read.append(nib.load(os.path.join(mask_path, label_all[i])).get_fdata())
         print("******verse data compare******")
         print("num{}, data_name:{}: data shape:{}, label shape:{}; Pixel -- data_max:{}, data_min:{}, "
               "label_max:{}, label_min:{} "
