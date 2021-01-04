@@ -53,7 +53,7 @@ def preprocess():
     check_dir(trainMask)
     check_dir(outputImage)
     check_dir(outputmask)
-    BLOCKSIZE = (64, 128, 128)
+    BLOCKSIZE = (32, 128, 128)
     for index in range(len(os.listdir(root_path))):
         print(os.path.join(root_path, "image" + str(index) + ".nii.gz"))
         # 1、读取数据
@@ -71,7 +71,7 @@ def preprocess():
         # 4、分块处理
         patch_block_size = BLOCKSIZE
         numberxy = patch_block_size[1]
-        numberz = 48  # patch_block_size[0]
+        numberz = 16  # patch_block_size[0]
         width = np.shape(img_crop)[1]
         height = np.shape(img_crop)[2]
         imagez = np.shape(img_crop)[0]

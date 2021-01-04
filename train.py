@@ -36,7 +36,7 @@ import losses
 from utils.common import str2bool, count_params
 import pandas as pd
 
-arch_names = list(Unet.__dict__.keys())
+arch_names = list(Vnet.__dict__.keys())
 loss_names = list(losses.__dict__.keys())
 loss_names.append('BCEWithLogitsLoss')
 
@@ -66,7 +66,7 @@ def parse_args():
                         help='loss: ' +
                              ' | '.join(loss_names) +
                              ' (default: BCEDiceLoss)')
-    parser.add_argument('--epochs', default=150, type=int, metavar='N',
+    parser.add_argument('--epochs', default=140, type=int, metavar='N',
                         help='number of total epochs to run')
     parser.add_argument('--early-stop', default=50, type=int,
                         metavar='N', help='early stopping (default: 20)')
@@ -234,7 +234,7 @@ def main():
 
     # create model
     print("=> creating model %s" % args.arch)
-    model = Unet.__dict__[args.arch](args)
+    model = Vnet.__dict__[args.arch](args)
     model = model.cuda()
     # model._initialize_weights()
     # model.load_state_dict(torch.load('model.pth'))

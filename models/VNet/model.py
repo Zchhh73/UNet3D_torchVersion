@@ -6,11 +6,13 @@ import torch.nn.functional as F
 def passthrough(x, **kwargs):
     return x
 
+
 def ELUCons(elu, nchan):
     if elu:
         return nn.ELU(inplace=True)
     else:
         return nn.PReLU(nchan)
+
 
 # normalization between sub-volumes is necessary
 # for good performance
@@ -22,7 +24,7 @@ class ContBatchNorm3d(nn.modules.batchnorm._BatchNorm):
         super(ContBatchNorm3d, self)._check_input_dim(input)
 
     def forward(self, input):
-        #self._check_input_dim(input)
+        # self._check_input_dim(input)
         return F.batch_norm(
             input, self.running_mean, self.running_var, self.weight, self.bias,
             True, self.momentum, self.eps)
@@ -57,15 +59,17 @@ class InputTransition(nn.Module):
     def forward(self, x):
         # do we want a PRELU here as well?
         out = self.conv1(x)
-        #print(out.shape)
+        # print(out.shape)
         out = self.bn1(out)
 
-        #print(out.shape)
+        # print(out.shape)
         # split input in to 16 channels
-        x16 = torch.cat((x, x, x, x,), 1)
-        #print(x16.shape)
-        myadd = torch.add(out,x16)
-        #print('i am here')
+        x16 = torch.cat((x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x), 1)
+        # print(x16.shape)
+        # print("out:", out.shape)
+        # print("x16:", x16.shape)
+        myadd = torch.add(out, x16)
+        # print('i am here')
         out = self.relu1(myadd)
         return out
 
@@ -73,7 +77,7 @@ class InputTransition(nn.Module):
 class DownTransition(nn.Module):
     def __init__(self, inChans, nConvs, elu, dropout=False):
         super(DownTransition, self).__init__()
-        outChans = 2*inChans
+        outChans = 2 * inChans
         self.down_conv = nn.Conv3d(inChans, outChans, kernel_size=2, stride=2)
         self.bn1 = ContBatchNorm3d(outChans)
         self.do1 = passthrough
@@ -117,10 +121,10 @@ class UpTransition(nn.Module):
 class OutputTransition(nn.Module):
     def __init__(self, inChans, elu, nll):
         super(OutputTransition, self).__init__()
-        self.conv1 = nn.Conv3d(inChans, 3, kernel_size=5, padding=2)
-        self.bn1 = ContBatchNorm3d(3)
-        self.conv2 = nn.Conv3d(3, 3, kernel_size=1)
-        self.relu1 = ELUCons(elu, 3)
+        self.conv1 = nn.Conv3d(inChans, 26, kernel_size=5, padding=2)
+        self.bn1 = ContBatchNorm3d(26)
+        self.conv2 = nn.Conv3d(26, 26, kernel_size=1)
+        self.relu1 = ELUCons(elu, 26)
         if nll:
             self.softmax = F.log_softmax
         else:
@@ -132,10 +136,10 @@ class OutputTransition(nn.Module):
         out = self.conv2(out)
 
         # make channels the last axis
-        #out = out.permute(0, 2, 3, 4, 1).contiguous()
+        # out = out.permute(0, 2, 3, 4, 1).contiguous()
         # flatten
-        #out = out.view(out.numel() // 2, 2)
-        #out = self.softmax(out)
+        # out = out.view(out.numel() // 2, 2)
+        # out = self.softmax(out)
         # treat channel 0 as the predicted output
         return out
 
@@ -159,7 +163,6 @@ class VNet(nn.Module):
         self.up_tr32 = UpTransition(64, 32, 1, elu)
         self.out_tr = OutputTransition(32, elu, nll)
 
-
     def forward(self, x):
         out16 = self.in_tr(x)
         out32 = self.down_tr32(out16)
@@ -173,14 +176,14 @@ class VNet(nn.Module):
         out = self.out_tr(out)
         return out
 
-#net = VNet(1)
-#net.apply(init)
+# net = VNet(1)
+# net.apply(init)
 
-#print('创建网络成功')
+# print('创建网络成功')
 
 # 输出数据维度检查
-#net = net.cuda()
-#data = torch.randn((2, 4, 32, 160, 160)).cuda()
-#res = net(data)
-#for item in res:
+# net = net.cuda()
+# data = torch.randn((2, 4, 32, 160, 160)).cuda()
+# res = net(data)
+# for item in res:
 #    print(item.size())
